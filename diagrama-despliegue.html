@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kata E1 — Diagrama de despliegue GCP</title>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+  </script>
+  <style>
+    :root {
+      --bg: #f6f6f4;
+      --card: #fff;
+      --text: #1a1a1a;
+      --muted: #5c5c5c;
+      --line: #d4d4d0;
+      --ok: #1b7f4e;
+      --off: #6b6b6b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.45 system-ui, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      padding: 32px 24px 48px;
+    }
+    main { max-width: 980px; margin: 0 auto; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    h2 { font-size: 18px; margin: 28px 0 12px; }
+    p.lead { color: var(--muted); margin: 0 0 24px; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+    .stat { background: var(--card); border: 1px solid var(--line); padding: 12px; }
+    .stat b { display: block; font-size: 22px; }
+    .stat span { color: var(--muted); font-size: 13px; }
+    .note { background: var(--card); border: 1px solid var(--line); padding: 12px 14px; margin-bottom: 24px; }
+    .grid { display: grid; gap: 12px; }
+    .g2 { grid-template-columns: 1fr 1fr; }
+    .g3 { grid-template-columns: 1fr 1fr 1fr; }
+    .node {
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: 12px;
+      min-height: 120px;
+    }
+    .node.live { border-color: var(--ok); }
+    .node h3 { margin: 0 0 8px; font-size: 14px; display: flex; gap: 8px; align-items: center; }
+    .pill { font-size: 11px; padding: 2px 8px; border: 1px solid var(--line); }
+    .live .pill { color: var(--ok); border-color: var(--ok); }
+    .off .pill { color: var(--off); }
+    .node ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 13px; }
+    .label { color: var(--muted); font-size: 12px; margin: 16px 0 8px; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); }
+    th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; font-size: 13px; }
+    th { background: #eee; }
+    .mermaid { background: var(--card); border: 1px solid var(--line); padding: 16px; margin: 16px 0 24px; }
+    @media (max-width: 800px) {
+      .g2, .g3, .stats { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Kata E1 — Diagrama de despliegue</h1>
+    <p class="lead">
+      Todo corre en Google Cloud: GKE Autopilot, Artifact Registry y Firebase Auth.
+      GitHub Actions construye imágenes y actualiza el cluster.
+    </p>
+
+    <div class="stats">
+      <div class="stat"><b>1</b><span>Cluster GKE Autopilot</span></div>
+      <div class="stat"><b>2+2+1</b><span>Réplicas front / Nest / RabbitMQ</span></div>
+      <div class="stat"><b>3</b><span>Logins Firebase</span></div>
+    </div>
+
+    <div class="note">
+      <strong>URL pública.</strong>
+      http://35.254.92.206 y http://35.254.92.206.sslip.io — LoadBalancer HTTP.
+      Front (nginx) hace proxy de /api al servicio usuarios.
+    </div>
+
+    <h2>Flujo</h2>
+    <div class="mermaid">
+flowchart TB
+  Browser[Navegador]
+  subgraph gcp [Google_Cloud]
+    subgraph gke [GKE_Autopilot_katae1]
+      Front[pod_front]
+      Api[pod_usuarios]
+      Mq[pod_rabbitmq]
+    end
+    AR[Artifact_Registry]
+    Fb[Firebase_Auth]
+  end
+  GH[GitHub_Actions]
+  Browser --> Front
+  Front --> Api
+  Browser --> Fb
+  Api --> Fb
+  Api --> Mq
+  GH --> AR
+  AR --> Front
+  AR --> Api
+    </div>
+
+    <h2>Nodos</h2>
+    <div class="node live">
+      <h3>Cliente <span class="pill">en uso</span></h3>
+      <ul><li>Navegador</li><li>HTTP (sin TLS todavía)</li></ul>
+    </div>
+
+    <p class="label">Google Cloud — round-seeker-309101</p>
+    <div class="grid g2">
+      <div class="node live">
+        <h3>GKE Autopilot katae1 <span class="pill">en uso</span></h3>
+        <ul>
+          <li>Región us-central1</li>
+          <li>Namespace katae1</li>
+          <li>Pods: front, usuarios, rabbitmq</li>
+          <li>Service front tipo LoadBalancer</li>
+        </ul>
+      </div>
+      <div class="node live">
+        <h3>Artifact Registry <span class="pill">en uso</span></h3>
+        <ul>
+          <li>us-central1-docker.pkg.dev/.../katae1</li>
+          <li>Imágenes front y usuarios</li>
+          <li>Tag por commit SHA</li>
+        </ul>
+      </div>
+    </div>
+    <div class="grid g3">
+      <div class="node live">
+        <h3>Pod front <span class="pill">en uso</span></h3>
+        <ul><li>2 réplicas nginx + React</li><li>Puerto 80</li><li>Proxy /api → usuarios</li></ul>
+      </div>
+      <div class="node live">
+        <h3>Pod usuarios <span class="pill">en uso</span></h3>
+        <ul><li>2 réplicas NestJS :3000</li><li>Verifica JWT Firebase</li><li>AMQP a rabbitmq:5672</li></ul>
+      </div>
+      <div class="node live">
+        <h3>Pod rabbitmq <span class="pill">en uso</span></h3>
+        <ul><li>1 réplica rabbitmq:3-management</li><li>ClusterIP interno</li><li>No expuesto a internet</li></ul>
+      </div>
+    </div>
+    <div class="grid g2">
+      <div class="node live">
+        <h3>Firebase Auth <span class="pill">en uso</span></h3>
+        <ul>
+          <li>Identity Platform</li>
+          <li>Google, correo, teléfono</li>
+          <li>round-seeker-309101.firebaseapp.com</li>
+        </ul>
+      </div>
+      <div class="node live">
+        <h3>GitHub Actions + WIF <span class="pill">en uso</span></h3>
+        <ul>
+          <li>pipeelyo/KataE1front</li>
+          <li>pipeelyo/KataE1Usuarios</li>
+          <li>pipeelyo/KataE1infra</li>
+          <li>Push a main → build, push, rollout</li>
+        </ul>
+      </div>
+      <div class="node off">
+        <h3>kind local <span class="pill">fuera</span></h3>
+        <ul>
+          <li>Repo KataE1infra</li>
+          <li>Mismas cargas, imágenes locales</li>
+          <li>http://localhost:8080</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Tráfico en runtime</h2>
+    <table>
+      <thead>
+        <tr><th>Desde</th><th>Hacia</th><th>Protocolo</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Navegador</td><td>35.254.92.206 (front LB)</td><td>HTTP</td></tr>
+        <tr><td>nginx front</td><td>usuarios:3000</td><td>HTTP /api</td></tr>
+        <tr><td>React</td><td>Firebase Auth</td><td>HTTPS OAuth / correo / SMS</td></tr>
+        <tr><td>NestJS</td><td>securetoken.google.com</td><td>HTTPS JWT JWKS</td></tr>
+        <tr><td>NestJS</td><td>rabbitmq:5672</td><td>AMQP interno</td></tr>
+      </tbody>
+    </table>
+
+    <h2>CI/CD</h2>
+    <table>
+      <thead>
+        <tr><th>Repo</th><th>Al hacer push a main</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>KataE1front</td><td>Build Docker + Firebase config → Artifact Registry → rollout front</td></tr>
+        <tr><td>KataE1Usuarios</td><td>Build Docker → Artifact Registry → rollout usuarios</td></tr>
+        <tr><td>KataE1infra</td><td>kubectl apply k8s/gke.yaml</td></tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

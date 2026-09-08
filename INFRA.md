@@ -1,112 +1,104 @@
-# Infraestructura Kata E1
+# Cómo funciona la infraestructura Kata E1
 
-Runtime en Google Cloud, proyecto `round-seeker-309101`. No hay Render ni Supabase en el camino.
+Guía para entender el runtime en Google Cloud (proyecto `round-seeker-309101`).
 
-## Qué corre
+**Diagrama visual:** abre [diagrama-despliegue.html](diagrama-despliegue.html) en el navegador (mismo contenido que el canvas). En GitHub: [ver HTML](https://github.com/pipeelyo/KataE1infra/blob/main/diagrama-despliegue.html).
 
-| Pieza | Dónde | Para qué |
+```mermaid
+flowchart TB
+  Browser[Navegador]
+  subgraph gcp [Google Cloud]
+    subgraph gke [GKE Autopilot katae1]
+      Front[pod front]
+      Api[pod usuarios]
+      Mq[pod rabbitmq]
+    end
+    AR[Artifact Registry]
+    Fb[Firebase Auth]
+  end
+  GH[GitHub Actions]
+  Browser --> Front
+  Front --> Api
+  Browser --> Fb
+  Api --> Fb
+  Api --> Mq
+  GH --> AR
+  AR --> Front
+  AR --> Api
+```
+
+## Idea en una frase
+
+El usuario abre una URL HTTP. Kubernetes sirve el React. El login lo hace Firebase. Nest solo comprueba el token. RabbitMQ está listo para colas, todavía sin productores.
+
+## Qué hace cada pieza
+
+**GKE Autopilot (`katae1`, región `us-central1`)**  
+Google administra los nodos. Tú declaras pods; Autopilot pone máquinas. Namespace `katae1`.
+
+**Pod front (2 réplicas)**  
+Imagen nginx + React. El Service `front` es LoadBalancer: Google le pone IP pública (`35.254.92.206`). nginx sirve el HTML/JS y, si la ruta empieza por `/api/`, no busca un archivo: reenvía a Nest (`usuarios:3000`). Por eso el navegador habla con un solo origen.
+
+**Pod usuarios (2 réplicas)**  
+NestJS. `/api/health` dice si el proceso vive. `/api/auth/me` exige `Authorization: Bearer` y valida el JWT contra las llaves públicas de Firebase. `/api/resilience` hace ping TCP a RabbitMQ con circuit breaker.
+
+**Pod rabbitmq (1 réplica)**  
+Broker AMQP en la red del cluster. Service ClusterIP: solo lo ven otros pods. No tiene IP en internet. Sin disco: si el pod muere, se olvidan las colas.
+
+**Firebase Auth (Identity Platform)**  
+El navegador entra con Google, correo o SMS. Firebase emite el JWT. Nest no guarda usuarios; solo verifica la firma.
+
+**Artifact Registry**  
+Sitio de las imágenes Docker (`front` y `usuarios`). El cluster las baja de ahí, no de Docker Hub (salvo RabbitMQ).
+
+**GitHub Actions**  
+Tres repos. Front y usuarios: al push a `main` construyen imagen, la suben y cambian el Deployment. Infra: aplica `k8s/gke.yaml`. GitHub se autentica en GCP con Workload Identity Federation (sin JSON key).
+
+**kind**  
+Misma receta en tu Mac (`kind.yaml` + `k8s/katae1.yaml`). Hoy no está encendido. No es producción.
+
+## Recorrido de un login
+
+1. Entras a `http://35.254.92.206` o `http://35.254.92.206.sslip.io`.
+2. El LoadBalancer entrega el pod front. React carga.
+3. Pulas Google / correo / teléfono. El popup o el SMS lo resuelve **Firebase** (HTTPS). GKE no envía el SMS.
+4. React toma el ID token y llama `/api/auth/me`. nginx lo manda a Nest.
+5. Nest baja (o usa cache de) JWKS en `securetoken.google.com`, verifica issuer y audience = `round-seeker-309101`, y devuelve email / nombre / teléfono.
+6. RabbitMQ no entra en el login. Nest solo lo vigila por TCP para el circuit breaker.
+
+## Los tres repos
+
+| Repo | Lo que cambia | Efecto |
 | --- | --- | --- |
-| Cluster `katae1` | GKE Autopilot, `us-central1` | Kubernetes de producción |
-| Pod `front` (2 réplicas) | Namespace `katae1` | React + nginx. Expone HTTP y hace proxy de `/api` a Nest |
-| Pod `usuarios` (2 réplicas) | Namespace `katae1` | NestJS: login token, health, circuit breaker de RabbitMQ |
-| Pod `rabbitmq` (1 réplica) | Namespace `katae1` | Broker AMQP interno. No sale a internet |
-| Artifact Registry `katae1` | `us-central1-docker.pkg.dev` | Imágenes `front` y `usuarios` |
-| Firebase Auth | Identity Platform | Google, correo y teléfono. Emite JWT |
-| GitHub Actions | Repos `pipeelyo/KataE1*` | Build, push de imagen y `kubectl` |
+| [KataE1front](https://github.com/pipeelyo/KataE1front) | UI, nginx | Nueva imagen `front` y rollout |
+| [KataE1Usuarios](https://github.com/pipeelyo/KataE1Usuarios) | API Nest | Nueva imagen `usuarios` y rollout |
+| [KataE1infra](https://github.com/pipeelyo/KataE1infra) | YAML del cluster | Réplicas, probes, env, servicios |
 
-URL pública: [http://35.254.92.206](http://35.254.92.206) o [http://35.254.92.206.sslip.io](http://35.254.92.206.sslip.io) (LoadBalancer HTTP, sin TLS).
+Código de app ≠ forma del cluster. Si cambias un puerto o una réplica, es infra. Si cambias un botón, es front.
 
-## Cómo se habla el tráfico
+## Resiliencia
 
-```
-Navegador
-  → LoadBalancer :80  (Service front)
-    → nginx
-      → estáticos React
-      → /api/*  → Service usuarios:3000
-  → Firebase Auth (HTTPS)  Google / correo / SMS
-Nest
-  → JWKS de Firebase (HTTPS) para validar el token
-  → TCP rabbitmq:5672  (circuit breaker; Nest aún no publica colas)
-```
+Kubernetes no envía tráfico a un pod hasta que pasa el **readiness**: front `/`, usuarios `/api/health`, RabbitMQ puerto `5672`.
 
-`KataE1front` y `KataE1Usuarios` cambian código e imagen. `KataE1infra` cambia el YAML del cluster (`k8s/gke.yaml`). `kind.yaml` es solo una copia local opcional; hoy no está encendida.
+Con 2 réplicas, borrar un pod de front o Nest no apaga la URL. Autopilot crea el reemplazo. nginx reintenta otra réplica si Nest no responde.
 
-## CI/CD
+**Circuit breaker** (`GET /api/resilience`): 3 pings fallidos a RabbitMQ → estado `open` 10 s (no sigue golpeando el broker) → `half-open` prueba otra vez. `/api/health` **no** mira RabbitMQ: el login sigue si el broker cae. Cada pod Nest tiene su propio contador en memoria.
 
-Push a `main`:
-
-1. Front o usuarios: Docker build → Artifact Registry (tag = SHA) → `kubectl set image` + rollout.
-2. Infra: `kubectl apply -f k8s/gke.yaml`.
-
-GitHub entra a GCP con Workload Identity Federation (cuenta `github-deploy@...`), sin JSON key.
-
-## Resiliencia que sí hay
-
-- **Readiness probes.** Kubernetes no manda tráfico a un pod hasta que responde: front `/`, usuarios `/api/health`, RabbitMQ TCP `:5672`.
-- **Autopilot.** Si un nodo o un pod muere, GKE crea otro. Con 2 réplicas de front y usuarios, borrar un pod no apaga la URL.
-- **nginx.** Timeout corto y `proxy_next_upstream` si una réplica de Nest falla.
-- **JWKS de Firebase.** `jose` cachea las llaves; un blip de Google no obliga a bajarlas en cada request.
-- **Circuit breaker de RabbitMQ** en Nest (`GET /api/resilience`):
-  - `closed`: ping TCP a `:5672` ok.
-  - 3 fallos → `open`: deja de spamear al broker 10 s y responde `circuit-open`.
-  - Luego `half-open`: un ping de prueba; si entra, vuelve a `closed`.
-- Cada réplica de Nest tiene **su propio** breaker en memoria. Con 2 pods, un `curl` puede pegarle al que ya abrió y el otro aún cuenta fallos.
-- `/api/health` **no** depende de RabbitMQ. Si el broker cae, el login sigue vivo.
-
-## Lo que no es resiliente todavía
-
-- RabbitMQ: 1 réplica y **sin disco**. Si el pod muere, se pierden las colas.
-- Nest aún no publica ni consume mensajes; el breaker solo vigila que el puerto AMQP responda.
-- HTTP sin TLS. Google login funciona por el `authDomain` de Firebase.
-- Sin HPA ni PodDisruptionBudget.
+Aún frágil: RabbitMQ en 1 réplica sin PVC; Nest no publica mensajes; HTTP sin TLS.
 
 ## Cómo validar
 
-Credenciales del cluster:
-
 ```bash
 gcloud container clusters get-credentials katae1 --region=us-central1 --project=round-seeker-309101
-```
 
-### 1. Salud
-
-```bash
 curl -s http://35.254.92.206/api/health
 curl -s http://35.254.92.206/api/resilience
-```
 
-Esperado: `{"status":"ok"}` y `rabbit: "up"` con `circuit.state: "closed"`.
-
-### 2. Matar un pod de front o Nest
-
-```bash
 kubectl -n katae1 delete pod -l app=front --wait=false
 curl -s -o /dev/null -w "%{http_code}\n" http://35.254.92.206/
-kubectl -n katae1 get pods -l app=front
-```
 
-Esperado: HTTP 200 mientras Autopilot levanta el reemplazo. Lo mismo con `-l app=usuarios` y `/api/health`.
-
-### 3. Circuit breaker (RabbitMQ caído)
-
-```bash
 kubectl -n katae1 scale deploy/rabbitmq --replicas=0
-sleep 5
-curl -s http://35.254.92.206/api/resilience
-# repetir 3 veces hasta ver "circuit-open"
-curl -s http://35.254.92.206/api/health
+curl -s http://35.254.92.206/api/resilience   # repetir hasta circuit-open
+curl -s http://35.254.92.206/api/health       # sigue ok
 kubectl -n katae1 scale deploy/rabbitmq --replicas=1
-sleep 15
-curl -s http://35.254.92.206/api/resilience
 ```
-
-Esperado: `/api/resilience` pasa a `degraded` / `circuit-open`. `/api/health` sigue `ok`. Al volver RabbitMQ, el circuito cierra.
-
-### 4. RabbitMQ no es durable
-
-```bash
-kubectl -n katae1 delete pod -l app=rabbitmq
-```
-
-El pod vuelve, las colas in-memory no. Para persistir haría falta un PVC.

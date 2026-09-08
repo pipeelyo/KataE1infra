@@ -10,7 +10,7 @@ metadata:
   namespace: katae1
 type: Opaque
 stringData:
-  SUPABASE_URL: https://cgnqftclzhgjlzollzye.supabase.co
+  GCP_PROJECT_ID: round-seeker-309101
   RABBITMQ_DEFAULT_USER: kata
   RABBITMQ_DEFAULT_PASS: kata
   RABBITMQ_URL: amqp://kata:kata@rabbitmq:5672
@@ -97,11 +97,11 @@ spec:
           env:
             - name: PORT
               value: "3000"
-            - name: SUPABASE_URL
+            - name: GCP_PROJECT_ID
               valueFrom:
                 secretKeyRef:
                   name: katae1
-                  key: SUPABASE_URL
+                  key: GCP_PROJECT_ID
             - name: RABBITMQ_URL
               valueFrom:
                 secretKeyRef:

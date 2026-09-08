@@ -51,6 +51,7 @@ GitHub entra a GCP con Workload Identity Federation (cuenta `github-deploy@...`)
   - `closed`: ping TCP a `:5672` ok.
   - 3 fallos → `open`: deja de spamear al broker 10 s y responde `circuit-open`.
   - Luego `half-open`: un ping de prueba; si entra, vuelve a `closed`.
+- Cada réplica de Nest tiene **su propio** breaker en memoria. Con 2 pods, un `curl` puede pegarle al que ya abrió y el otro aún cuenta fallos.
 - `/api/health` **no** depende de RabbitMQ. Si el broker cae, el login sigue vivo.
 
 ## Lo que no es resiliente todavía

@@ -37,7 +37,6 @@
     .note { background: var(--card); border: 1px solid var(--line); padding: 12px 14px; margin-bottom: 24px; }
     .grid { display: grid; gap: 12px; }
     .g2 { grid-template-columns: 1fr 1fr; }
-    .g3 { grid-template-columns: 1fr 1fr 1fr; }
     .node {
       background: var(--card);
       border: 1px solid var(--line);
@@ -56,7 +55,7 @@
     th { background: #eee; }
     .mermaid { background: var(--card); border: 1px solid var(--line); padding: 16px; margin: 16px 0 24px; }
     @media (max-width: 800px) {
-      .g2, .g3, .stats { grid-template-columns: 1fr; }
+      .g2, .stats { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -64,20 +63,20 @@
   <main>
     <h1>Kata E1 — Diagrama de despliegue</h1>
     <p class="lead">
-      Todo corre en Google Cloud: GKE Autopilot, Artifact Registry y Firebase Auth.
-      GitHub Actions construye imágenes y actualiza el cluster.
+      Google Cloud: GKE Autopilot, Artifact Registry, Firebase Auth y Redis.
+      Nest documenta la API en Swagger. GitHub Actions despliega al cluster.
     </p>
 
     <div class="stats">
       <div class="stat"><b>1</b><span>Cluster GKE Autopilot</span></div>
-      <div class="stat"><b>2+2+1</b><span>Réplicas front / Nest / RabbitMQ</span></div>
+      <div class="stat"><b>2+2+1+1</b><span>front / Nest / RabbitMQ / Redis</span></div>
       <div class="stat"><b>3</b><span>Logins Firebase</span></div>
     </div>
 
     <div class="note">
       <strong>URL pública.</strong>
-      http://35.254.92.206 y http://35.254.92.206.sslip.io — LoadBalancer HTTP.
-      Front (nginx) hace proxy de /api al servicio usuarios.
+      http://35.254.92.206 y http://35.254.92.206.sslip.io.
+      Swagger: <a href="http://35.254.92.206/api/docs">http://35.254.92.206/api/docs</a>
     </div>
 
     <h2>Flujo</h2>
@@ -89,6 +88,7 @@ flowchart TB
       Front[pod_front]
       Api[pod_usuarios]
       Mq[pod_rabbitmq]
+      Rd[pod_redis]
     end
     AR[Artifact_Registry]
     Fb[Firebase_Auth]
@@ -99,6 +99,7 @@ flowchart TB
   Browser --> Fb
   Api --> Fb
   Api --> Mq
+  Api --> Rd
   GH --> AR
   AR --> Front
   AR --> Api
@@ -107,7 +108,7 @@ flowchart TB
     <h2>Nodos</h2>
     <div class="node live">
       <h3>Cliente <span class="pill">en uso</span></h3>
-      <ul><li>Navegador</li><li>HTTP (sin TLS todavía)</li></ul>
+      <ul><li>Navegador</li><li>HTTP (sin TLS todavía)</li><li>Swagger /api/docs</li></ul>
     </div>
 
     <p class="label">Google Cloud — round-seeker-309101</p>
@@ -117,7 +118,7 @@ flowchart TB
         <ul>
           <li>Región us-central1</li>
           <li>Namespace katae1</li>
-          <li>Pods: front, usuarios, rabbitmq</li>
+          <li>front, usuarios, rabbitmq, redis</li>
           <li>Service front tipo LoadBalancer</li>
         </ul>
       </div>
@@ -129,22 +130,22 @@ flowchart TB
           <li>Tag por commit SHA</li>
         </ul>
       </div>
-    </div>
-    <div class="grid g3">
       <div class="node live">
         <h3>Pod front <span class="pill">en uso</span></h3>
         <ul><li>2 réplicas nginx + React</li><li>Puerto 80</li><li>Proxy /api → usuarios</li></ul>
       </div>
       <div class="node live">
         <h3>Pod usuarios <span class="pill">en uso</span></h3>
-        <ul><li>2 réplicas NestJS :3000</li><li>Verifica JWT Firebase</li><li>AMQP a rabbitmq:5672</li></ul>
+        <ul><li>2 réplicas NestJS :3000</li><li>Swagger + JWT Firebase</li><li>Pool Redis (4) + AMQP</li></ul>
       </div>
       <div class="node live">
         <h3>Pod rabbitmq <span class="pill">en uso</span></h3>
-        <ul><li>1 réplica rabbitmq:3-management</li><li>ClusterIP interno</li><li>No expuesto a internet</li></ul>
+        <ul><li>1 réplica rabbitmq:3-management</li><li>ClusterIP interno</li><li>Circuit breaker en Nest</li></ul>
       </div>
-    </div>
-    <div class="grid g2">
+      <div class="node live">
+        <h3>Pod redis <span class="pill">en uso</span></h3>
+        <ul><li>1 réplica redis:7-alpine</li><li>Cache, pool de 4 conexiones</li><li>ClusterIP interno</li></ul>
+      </div>
       <div class="node live">
         <h3>Firebase Auth <span class="pill">en uso</span></h3>
         <ul>
@@ -162,14 +163,16 @@ flowchart TB
           <li>Push a main → build, push, rollout</li>
         </ul>
       </div>
-      <div class="node off">
-        <h3>kind local <span class="pill">fuera</span></h3>
-        <ul>
-          <li>Repo KataE1infra</li>
-          <li>Mismas cargas, imágenes locales</li>
-          <li>http://localhost:8080</li>
-        </ul>
-      </div>
+    </div>
+
+    <p class="label">Local</p>
+    <div class="node off">
+      <h3>kind local <span class="pill">fuera</span></h3>
+      <ul>
+        <li>Repo KataE1infra</li>
+        <li>Incluye redis + rabbitmq</li>
+        <li>http://localhost:8080</li>
+      </ul>
     </div>
 
     <h2>Tráfico en runtime</h2>
@@ -179,10 +182,12 @@ flowchart TB
       </thead>
       <tbody>
         <tr><td>Navegador</td><td>35.254.92.206 (front LB)</td><td>HTTP</td></tr>
+        <tr><td>Navegador</td><td>/api/docs (Swagger)</td><td>HTTP</td></tr>
         <tr><td>nginx front</td><td>usuarios:3000</td><td>HTTP /api</td></tr>
         <tr><td>React</td><td>Firebase Auth</td><td>HTTPS OAuth / correo / SMS</td></tr>
         <tr><td>NestJS</td><td>securetoken.google.com</td><td>HTTPS JWT JWKS</td></tr>
-        <tr><td>NestJS</td><td>rabbitmq:5672</td><td>AMQP interno</td></tr>
+        <tr><td>NestJS</td><td>redis:6379</td><td>Redis pool (4 conns)</td></tr>
+        <tr><td>NestJS</td><td>rabbitmq:5672</td><td>AMQP / ping TCP</td></tr>
       </tbody>
     </table>
 

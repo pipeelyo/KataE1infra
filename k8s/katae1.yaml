@@ -49,6 +49,39 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: redis
+  namespace: katae1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: katae1
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: usuarios
   namespace: katae1
 spec:
@@ -74,6 +107,8 @@ spec:
               value: round-seeker-309101
             - name: RABBITMQ_URL
               value: amqp://kata:kata@rabbitmq:5672
+            - name: REDIS_URL
+              value: redis://redis:6379
 ---
 apiVersion: v1
 kind: Service

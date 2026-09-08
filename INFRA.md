@@ -12,6 +12,7 @@ flowchart TB
       Front[pod front]
       Api[pod usuarios]
       Mq[pod rabbitmq]
+      Rd[pod redis]
     end
     AR[Artifact Registry]
     Fb[Firebase Auth]
@@ -22,6 +23,7 @@ flowchart TB
   Browser --> Fb
   Api --> Fb
   Api --> Mq
+  Api --> Rd
   GH --> AR
   AR --> Front
   AR --> Api
@@ -29,7 +31,7 @@ flowchart TB
 
 ## Idea en una frase
 
-El usuario abre una URL HTTP. Kubernetes sirve el React. El login lo hace Firebase. Nest solo comprueba el token. RabbitMQ está listo para colas, todavía sin productores.
+El usuario abre una URL HTTP. Kubernetes sirve el React. El login lo hace Firebase. Nest comprueba el token y usa Redis como cache. RabbitMQ está listo para colas.
 
 ## Qué hace cada pieza
 
@@ -37,10 +39,13 @@ El usuario abre una URL HTTP. Kubernetes sirve el React. El login lo hace Fireba
 Google administra los nodos. Tú declaras pods; Autopilot pone máquinas. Namespace `katae1`.
 
 **Pod front (2 réplicas)**  
-Imagen nginx + React. El Service `front` es LoadBalancer: Google le pone IP pública (`35.254.92.206`). nginx sirve el HTML/JS y, si la ruta empieza por `/api/`, no busca un archivo: reenvía a Nest (`usuarios:3000`). Por eso el navegador habla con un solo origen.
+Imagen nginx + React. El Service `front` es LoadBalancer: Google le pone IP pública (`35.254.92.206`). nginx sirve el HTML/JS y, si la ruta empieza por `/api/`, no busca un archivo: reenvía a Nest (`usuarios:3000`). Por eso el navegador habla con un solo origen. Swagger: [http://35.254.92.206/api/docs](http://35.254.92.206/api/docs).
 
 **Pod usuarios (2 réplicas)**  
-NestJS. `/api/health` dice si el proceso vive. `/api/auth/me` exige `Authorization: Bearer` y valida el JWT contra las llaves públicas de Firebase. `/api/resilience` hace ping TCP a RabbitMQ con circuit breaker.
+NestJS. Swagger en `/api/docs`. `/api/health` dice si el proceso vive. `/api/auth/me` valida el JWT de Firebase. `/api/cache` lee/escribe Redis. `/api/resilience` mira RabbitMQ y el pool Redis.
+
+**Pod redis (1 réplica)**  
+Cache en memoria. Nest abre un **pool de 4 conexiones** ioredis (`REDIS_POOL_SIZE`). No es un pooler de Postgres (eso sería PgBouncer cuando haya Cloud SQL). Redis no sale a internet.
 
 **Pod rabbitmq (1 réplica)**  
 Broker AMQP en la red del cluster. Service ClusterIP: solo lo ven otros pods. No tiene IP en internet. Sin disco: si el pod muere, se olvidan las colas.

@@ -1,0 +1,40 @@
+name: apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT: round-seeker-309101
+  REGION: us-central1
+  CLUSTER: katae1
+  WIF: projects/741064653110/locations/global/workloadIdentityPools/github/providers/github
+  SA: github-deploy@round-seeker-309101.iam.gserviceaccount.com
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF }}
+          service_account: ${{ env.SA }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT }}
+
+      - name: Apply
+        run: kubectl apply -f k8s/gke.yaml

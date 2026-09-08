@@ -79,7 +79,7 @@ metadata:
   name: usuarios
   namespace: katae1
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: usuarios
@@ -139,7 +139,7 @@ metadata:
   name: front
   namespace: katae1
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: front
